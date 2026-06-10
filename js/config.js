@@ -5,13 +5,13 @@
 // Your apps → Web app → SDK setup and configuration
 // ============================================================
 export const firebaseConfig = {
-  apiKey: "PASTE_YOUR_API_KEY_HERE",
-  authDomain: "your-project.firebaseapp.com",
-  databaseURL: "https://your-project-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "your-project",
-  storageBucket: "your-project.appspot.com",
-  messagingSenderId: "000000000000",
-  appId: "1:000000000000:web:0000000000000000000000",
+  apiKey: "AIzaSyBXaPKLTXnSrw7jfi6btjGbvCJXLbRyU18",
+  authDomain: "tripsplit-1e110.firebaseapp.com",
+  databaseURL: "https://tripsplit-1e110-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "tripsplit-1e110",
+  storageBucket: "tripsplit-1e110.firebasestorage.app",
+  messagingSenderId: "1077603830059",
+  appId: "1:1077603830059:web:fac97f5257e80c2ecbdd6e",
 };
 
 // App-wide constants
