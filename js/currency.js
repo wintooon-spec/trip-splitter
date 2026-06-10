@@ -30,7 +30,7 @@ export async function getRate(currency) {
   if (cache[currency]?.fetchedOn === today) return { ...cache[currency], stale: false };
   try {
     const res = await fetch(
-      `https://api.frankfurter.app/latest?from=${currency}&to=${HOME_CURRENCY}`,
+      `https://api.frankfurter.dev/v1/latest?base=${currency}&symbols=${HOME_CURRENCY}`,
       { signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

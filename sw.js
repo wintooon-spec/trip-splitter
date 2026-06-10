@@ -1,6 +1,6 @@
 // Service worker: cache-first app shell so the PWA opens offline.
 // Firebase, Frankfurter and Anthropic traffic is never intercepted.
-const CACHE = "tripsplit-v1";
+const CACHE = "tripsplit-v2";
 
 const SHELL = [
   "./",
@@ -30,7 +30,7 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-const PASS_THROUGH = ["firebasedatabase.app", "firebaseio.com", "api.frankfurter.app", "api.anthropic.com", "googleapis.com"];
+const PASS_THROUGH = ["firebasedatabase.app", "firebaseio.com", "api.frankfurter.dev", "api.anthropic.com", "googleapis.com"];
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
