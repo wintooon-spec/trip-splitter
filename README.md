@@ -2,6 +2,8 @@
 
 Mobile-first PWA for splitting and tracking travel expenses in a small group. Built for a 6-week Europe trip: a core pair plus friends who join for individual legs.
 
+**Live app:** <https://wintooon-spec.github.io/trip-splitter/>
+
 **Setup:** see [SETUP.md](SETUP.md) — Firebase config is required before first use.
 
 ## Features
