@@ -1,0 +1,6 @@
+{
+  "rules": {
+    "trips": { ".read": true, ".write": true },
+    "joinCodes": { ".read": true, ".write": true }
+  }
+}

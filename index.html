@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0f1115">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="TripSplit">
+  <title>TripSplit</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="./icons/icon-192.png">
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+
+  <div id="offline-banner" class="offline-banner hidden">Offline — changes will sync when you reconnect (keep the app open)</div>
+  <div id="config-banner" class="config-banner hidden">Firebase not configured yet — see SETUP.md</div>
+
+  <!-- ============ ONBOARDING ============ -->
+  <section id="screen-onboard" class="screen hidden">
+    <div class="onboard-wrap">
+      <div class="logo">🧾</div>
+      <h1>TripSplit</h1>
+      <p class="muted center">Split travel expenses with your group, synced live between phones.</p>
+
+      <div id="onboard-choice">
+        <button class="btn btn-primary btn-big" id="btn-show-create">Create a new trip</button>
+        <button class="btn btn-secondary btn-big" id="btn-show-join">Join with a code</button>
+      </div>
+
+      <!-- Create trip -->
+      <form id="form-create" class="hidden">
+        <label>Trip name
+          <input type="text" id="create-name" placeholder="Europe 2026" required maxlength="40" autocomplete="off">
+        </label>
+        <label>Your name
+          <input type="text" id="create-me" placeholder="Alex" required maxlength="20" autocomplete="off">
+        </label>
+        <label>Other core members
+          <div id="create-others"></div>
+          <button type="button" class="btn btn-ghost btn-small" id="btn-add-other">+ Add another person</button>
+        </label>
+        <label>Daily budget per person (AUD, optional)
+          <input type="number" id="create-budget" placeholder="150" min="0" step="1" inputmode="decimal">
+        </label>
+        <button type="submit" class="btn btn-primary btn-big">Create trip</button>
+        <button type="button" class="btn btn-ghost" data-back>Back</button>
+      </form>
+
+      <!-- Join trip -->
+      <form id="form-join" class="hidden">
+        <label>Join code
+          <input type="text" id="join-code" placeholder="EU2026-4X9" required autocomplete="off" autocapitalize="characters" style="text-transform:uppercase">
+        </label>
+        <button type="submit" class="btn btn-primary btn-big">Find trip</button>
+        <button type="button" class="btn btn-ghost" data-back>Back</button>
+        <div id="join-error" class="error hidden"></div>
+      </form>
+
+      <!-- Who are you (after join) -->
+      <div id="join-identity" class="hidden">
+        <h2 id="join-trip-name"></h2>
+        <p class="muted">Who are you?</p>
+        <div id="join-member-list" class="stack"></div>
+        <form id="form-join-new">
+          <label>Or join as someone new
+            <input type="text" id="join-new-name" placeholder="Your name" maxlength="20" autocomplete="off">
+          </label>
+          <button type="submit" class="btn btn-secondary">Join as new member</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HOME ============ -->
+  <section id="screen-home" class="screen hidden">
+    <header class="app-header">
+      <div>
+        <h1 id="home-trip-name"></h1>
+        <div class="muted small" id="home-trip-sub"></div>
+      </div>
+      <button class="icon-btn" id="btn-share-code" title="Share join code">📤</button>
+    </header>
+
+    <div class="card join-code-card">
+      <span class="muted small">Join code</span>
+      <span class="join-code" id="home-join-code"></span>
+    </div>
+
+    <div class="stat-row">
+      <div class="card stat">
+        <div class="stat-value" id="home-my-spend">—</div>
+        <div class="stat-label">My total spend</div>
+      </div>
+      <div class="card stat" id="home-budget-card">
+        <div class="stat-value" id="home-budget-status">—</div>
+        <div class="stat-label" id="home-budget-label">Daily budget</div>
+      </div>
+    </div>
+
+    <div class="section-title-row">
+      <h2>Groups</h2>
+      <button class="btn btn-ghost btn-small" id="btn-new-group">+ New group</button>
+    </div>
+    <div id="home-groups" class="stack"></div>
+
+    <div id="home-closed-wrap" class="hidden">
+      <h2 class="muted">Closed groups</h2>
+      <div id="home-closed-groups" class="stack"></div>
+    </div>
+  </section>
+
+  <!-- ============ NEW GROUP ============ -->
+  <section id="screen-newgroup" class="screen hidden">
+    <header class="app-header">
+      <button class="icon-btn" data-nav="home">←</button>
+      <h1>New group</h1>
+    </header>
+    <form id="form-newgroup">
+      <label>Group name
+        <input type="text" id="newgroup-name" placeholder="Croatia leg" required maxlength="30" autocomplete="off">
+      </label>
+      <label>Who's in it?</label>
+      <div id="newgroup-members" class="stack"></div>
+      <label>Add someone new to the trip
+        <div class="row">
+          <input type="text" id="newgroup-newname" placeholder="Name" maxlength="20" autocomplete="off">
+          <button type="button" class="btn btn-secondary" id="btn-newgroup-add">Add</button>
+        </div>
+      </label>
+      <button type="submit" class="btn btn-primary btn-big">Create group</button>
+    </form>
+  </section>
+
+  <!-- ============ EXPENSES ============ -->
+  <section id="screen-expenses" class="screen hidden">
+    <header class="app-header">
+      <h1>Expenses</h1>
+    </header>
+    <div id="expenses-group-tabs" class="group-tabs"></div>
+    <div id="expenses-closed-note" class="closed-note hidden">This group is closed — view only</div>
+    <div id="expense-list" class="stack"></div>
+    <div id="expenses-empty" class="empty hidden">
+      <p>No expenses yet.</p>
+      <p class="muted">Tap + to add your first one.</p>
+    </div>
+    <button class="fab" id="btn-add-expense">+</button>
+  </section>
+
+  <!-- ============ ADD / EDIT EXPENSE ============ -->
+  <section id="screen-add" class="screen hidden">
+    <header class="app-header">
+      <button class="icon-btn" data-nav="expenses">←</button>
+      <h1 id="add-title">Add expense</h1>
+    </header>
+
+    <form id="form-expense">
+      <div class="scan-row">
+        <input type="file" id="receipt-input" accept="image/*" capture="environment" class="hidden-input">
+        <button type="button" class="btn btn-secondary" id="btn-scan">📷 Scan receipt</button>
+        <span id="scan-status" class="muted small"></span>
+      </div>
+
+      <label>Amount
+        <div class="amount-row">
+          <input type="number" id="exp-amount" placeholder="0.00" step="0.01" min="0.01" inputmode="decimal" required>
+          <div class="currency-picker" id="exp-currency"></div>
+        </div>
+        <div class="muted small" id="exp-aud-preview"></div>
+      </label>
+
+      <label>Description
+        <input type="text" id="exp-desc" placeholder="Dinner at the harbour" maxlength="60" autocomplete="off" required>
+      </label>
+
+      <label>Category</label>
+      <div class="chip-row" id="exp-category"></div>
+
+      <label>Paid by</label>
+      <div class="chip-row" id="exp-paidby"></div>
+
+      <div class="section-title-row">
+        <label>Split between</label>
+        <button type="button" class="btn btn-ghost btn-small" id="btn-split-mode">Custom amounts</button>
+      </div>
+      <div id="exp-splits" class="stack"></div>
+      <div id="split-error" class="error hidden"></div>
+
+      <button type="submit" class="btn btn-primary btn-big" id="btn-save-expense">Save expense</button>
+      <button type="button" class="btn btn-danger hidden" id="btn-delete-expense">Delete expense</button>
+    </form>
+  </section>
+
+  <!-- ============ BALANCES ============ -->
+  <section id="screen-balances" class="screen hidden">
+    <header class="app-header">
+      <h1>Balances</h1>
+    </header>
+    <div id="balances-group-tabs" class="group-tabs"></div>
+    <div id="balances-closed-note" class="closed-note hidden">This group is closed — final balances</div>
+
+    <h2>Net positions <span class="muted small">(AUD)</span></h2>
+    <div id="balance-list" class="stack"></div>
+
+    <h2>Settle up</h2>
+    <div id="settle-list" class="stack"></div>
+    <div id="settle-empty" class="empty hidden"><p>✅ All square — nothing owed.</p></div>
+
+    <div id="settlement-history-wrap" class="hidden">
+      <h2 class="muted">Settled payments</h2>
+      <div id="settlement-history" class="stack"></div>
+    </div>
+
+    <button class="btn btn-danger btn-big" id="btn-close-group">Close this group</button>
+  </section>
+
+  <!-- ============ INSIGHTS ============ -->
+  <section id="screen-insights" class="screen hidden">
+    <header class="app-header">
+      <h1>Insights</h1>
+    </header>
+
+    <div class="stat-row">
+      <div class="card stat">
+        <div class="stat-value" id="ins-total">—</div>
+        <div class="stat-label">My spend (all groups)</div>
+      </div>
+      <div class="card stat">
+        <div class="stat-value" id="ins-daily-avg">—</div>
+        <div class="stat-label">My daily average</div>
+      </div>
+    </div>
+
+    <div class="card hidden" id="ins-budget-card">
+      <div class="section-title-row" style="margin:0">
+        <h2 style="margin:0">Budget</h2>
+        <span id="ins-budget-badge" class="badge"></span>
+      </div>
+      <div class="budget-bar"><div class="budget-bar-fill" id="ins-budget-fill"></div></div>
+      <div class="muted small" id="ins-budget-detail"></div>
+    </div>
+
+    <h2>Spend by category</h2>
+    <div class="card">
+      <div class="donut-wrap">
+        <svg id="ins-donut" viewBox="0 0 120 120" width="130" height="130"></svg>
+        <div id="ins-donut-legend" class="legend"></div>
+      </div>
+    </div>
+
+    <h2>Spend by group</h2>
+    <div class="card" id="ins-groups"></div>
+
+    <button class="btn btn-secondary btn-big" id="btn-export">📋 Export trip summary</button>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section id="screen-settings" class="screen hidden">
+    <header class="app-header">
+      <h1>Settings</h1>
+    </header>
+
+    <div class="card">
+      <h2>Anthropic API key</h2>
+      <p class="muted small">Used for receipt scanning. Stored only on this device.</p>
+      <input type="password" id="setting-api-key" placeholder="sk-ant-...">
+      <button class="btn btn-secondary" id="btn-save-key">Save key</button>
+      <div class="muted small" id="key-status"></div>
+    </div>
+
+    <div class="card">
+      <h2>Trip</h2>
+      <div id="settings-trip-info" class="muted small"></div>
+      <button class="btn btn-danger" id="btn-leave-trip">Leave trip on this device</button>
+      <p class="muted small">Trip data stays in Firebase — you can rejoin with the code.</p>
+    </div>
+  </section>
+
+  <!-- ============ BOTTOM NAV ============ -->
+  <nav id="bottom-nav" class="bottom-nav hidden">
+    <button data-nav="home"><span>🏠</span>Home</button>
+    <button data-nav="expenses"><span>🧾</span>Expenses</button>
+    <button data-nav="balances"><span>⚖️</span>Balances</button>
+    <button data-nav="insights"><span>📊</span>Insights</button>
+    <button data-nav="settings"><span>⚙️</span>Settings</button>
+  </nav>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="./js/main.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js"));
+    }
+  </script>
+</body>
+</html>
