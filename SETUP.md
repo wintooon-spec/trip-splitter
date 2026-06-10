@@ -40,11 +40,14 @@ All trip data lives in a free Firebase Realtime Database so both phones sync liv
 
 ---
 
-## 2. Anthropic API key (optional — receipt scanning)
+## 2. Receipt scanning API key (optional)
 
-1. Go to <https://console.anthropic.com>, create an account, and add a small amount of credit (US$5 lasts a long time — each receipt scan with Haiku costs a fraction of a cent).
-2. Go to **API keys → Create key**, copy the `sk-ant-...` key.
-3. In the app: **Settings → Anthropic API key → paste → Save key**.
+Two options — the app detects which you pasted by the key prefix:
+
+- **Free — Google Gemini:** go to <https://aistudio.google.com/apikey>, sign in with Google, click **Create API key**, copy the `AIza...` key. Free tier is plenty for a trip's worth of receipts.
+- **Paid — Anthropic:** <https://console.anthropic.com> → add credit → **API keys → Create key** → copy the `sk-ant-...` key (a fraction of a cent per scan).
+
+Then in the app: **Settings → Receipt scanning API key → paste → Save key**.
 
 The key is stored only in your phone's localStorage. Each phone that wants to scan receipts enters the key once. Photos are sent to Anthropic for extraction and are **not stored** anywhere.
 

@@ -20,3 +20,4 @@ export const CURRENCIES = ["EUR", "GBP", "AUD", "USD"];
 export const CURRENCY_SYMBOLS = { EUR: "€", GBP: "£", AUD: "A$", USD: "US$" };
 export const HOME_CURRENCY = "AUD";
 export const ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
+export const GEMINI_MODEL = "gemini-2.5-flash";

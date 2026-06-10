@@ -1,6 +1,7 @@
-// Receipt scanning via Anthropic Haiku vision. The photo is sent for
-// extraction only and never stored anywhere.
-import { ANTHROPIC_MODEL, CATEGORIES, CURRENCIES } from "./config.js";
+// Receipt scanning via Anthropic Haiku or Google Gemini vision, chosen by
+// key prefix (sk-ant-... = Anthropic, AIza... = Gemini free tier). The photo
+// is sent for extraction only and never stored anywhere.
+import { ANTHROPIC_MODEL, GEMINI_MODEL, CATEGORIES, CURRENCIES } from "./config.js";
 
 export function getApiKey() {
   return localStorage.getItem("ts_anthropic_key") || "";
@@ -24,14 +25,17 @@ export async function fileToJpegBase64(file, maxDim = 1280, quality = 0.8) {
   return dataUrl.split(",")[1];
 }
 
-// Returns { amount, currency, merchant, category } — any field may be null.
-// Throws on network/API/parse failure; caller falls back to manual entry.
-export async function scanReceipt(file) {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("NO_KEY");
+const PROMPT =
+`Extract the following from this receipt and reply with ONLY a JSON object, no other text:
+{
+  "amount": <final total paid, as a number, no thousands separators>,
+  "currency": <ISO code, one of ${CURRENCIES.join("/")}, or your best guess from the receipt>,
+  "merchant": <short merchant/store name as a string>,
+  "category": <exactly one of: ${CATEGORIES.join(", ")}>
+}
+Use null for any field you cannot determine. A restaurant/cafe/supermarket is "Food", a bar is "Drinks", taxis/trains/fuel are "Transport", hotels are "Accommodation", tours/tickets are "Activities", everything else retail is "Shopping".`;
 
-  const base64 = await fileToJpegBase64(file);
-
+async function scanAnthropic(apiKey, base64) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -47,30 +51,54 @@ export async function scanReceipt(file) {
         role: "user",
         content: [
           { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } },
-          {
-            type: "text",
-            text:
-`Extract the following from this receipt and reply with ONLY a JSON object, no other text:
-{
-  "amount": <final total paid, as a number, no thousands separators>,
-  "currency": <ISO code, one of ${CURRENCIES.join("/")}, or your best guess from the receipt>,
-  "merchant": <short merchant/store name as a string>,
-  "category": <exactly one of: ${CATEGORIES.join(", ")}>
-}
-Use null for any field you cannot determine. A restaurant/cafe/supermarket is "Food", a bar is "Drinks", taxis/trains/fuel are "Transport", hotels are "Accommodation", tours/tickets are "Activities", everything else retail is "Shopping".`,
-          },
+          { type: "text", text: PROMPT },
         ],
       }],
     }),
   });
-
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${body.slice(0, 200)}`);
   }
-
   const data = await res.json();
-  const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+  return (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+}
+
+async function scanGemini(apiKey, base64) {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { inline_data: { mime_type: "image/jpeg", data: base64 } },
+            { text: PROMPT },
+          ],
+        }],
+      }),
+    }
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`API ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+}
+
+// Returns { amount, currency, merchant, category } — any field may be null.
+// Throws on network/API/parse failure; caller falls back to manual entry.
+export async function scanReceipt(file) {
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("NO_KEY");
+
+  const base64 = await fileToJpegBase64(file);
+  const text = apiKey.startsWith("AIza")
+    ? await scanGemini(apiKey, base64)
+    : await scanAnthropic(apiKey, base64);
+
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("PARSE");
   const parsed = JSON.parse(match[0]);
