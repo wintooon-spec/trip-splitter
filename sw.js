@@ -1,6 +1,6 @@
 // Service worker: cache-first app shell so the PWA opens offline.
 // Firebase, Frankfurter and Anthropic traffic is never intercepted.
-const CACHE = "tripsplit-v3";
+const CACHE = "tripsplit-v4";
 
 const SHELL = [
   "./",

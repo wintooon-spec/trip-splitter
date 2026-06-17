@@ -65,3 +65,54 @@ export function equalSplit(amount, memberIds) {
   }
   return splits;
 }
+
+// Round a map of raw (possibly fractional-cent) dollar amounts so the rounded
+// values sum to exactly `total`. Leftover cents go to the largest fractional
+// parts first, so the split always reconciles to the bill to the penny.
+export function roundToTotal(rawMap, total) {
+  const ids = Object.keys(rawMap);
+  const targetCents = Math.round(total * 100);
+  const floors = ids.map((id) => Math.floor(Math.round(rawMap[id] * 100 * 1000) / 1000));
+  let used = floors.reduce((a, b) => a + b, 0);
+  let leftover = targetCents - used;
+  // distribute remaining cents (or claw back if we overshot) by fractional part
+  const order = ids
+    .map((id, i) => ({ i, frac: rawMap[id] * 100 - floors[i] }))
+    .sort((a, b) => b.frac - a.frac);
+  const cents = floors.slice();
+  let k = 0;
+  while (leftover > 0 && order.length) { cents[order[k % order.length].i]++; leftover--; k++; }
+  k = 0;
+  while (leftover < 0 && order.length) { cents[order[k % order.length].i]--; leftover++; k++; }
+  const out = {};
+  ids.forEach((id, i) => { out[id] = cents[i] / 100; });
+  return out;
+}
+
+// Itemized split. `items` is [{ price, members: [memberId, ...] }] — each
+// item's price is shared equally among its assigned members. Any difference
+// between the items' subtotal and `billTotal` (tax/service added on top, or a
+// discount) is absorbed proportionally by scaling everyone by billTotal/itemsTotal.
+// Returns { splits, itemsTotal, factor } with splits summing exactly to billTotal.
+export function computeItemizedSplits(items, billTotal) {
+  const raw = {};
+  let itemsTotal = 0;
+  for (const it of items) {
+    const price = Number(it.price) || 0;
+    const mem = it.members || [];
+    if (!mem.length || price === 0) continue;
+    itemsTotal += price;
+    const each = price / mem.length;
+    for (const m of mem) raw[m] = (raw[m] || 0) + each;
+  }
+  const factor = itemsTotal > 0 ? billTotal / itemsTotal : 1;
+  for (const m of Object.keys(raw)) raw[m] *= factor;
+  return { splits: roundToTotal(raw, billTotal), itemsTotal, factor };
+}
+
+// Convert a {memberId: percent} map into dollar amounts summing to `total`.
+export function percentToAmounts(percentMap, total) {
+  const raw = {};
+  for (const [m, pct] of Object.entries(percentMap)) raw[m] = total * (Number(pct) || 0) / 100;
+  return roundToTotal(raw, total);
+}

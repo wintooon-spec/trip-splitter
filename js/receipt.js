@@ -26,14 +26,21 @@ export async function fileToJpegBase64(file, maxDim = 1280, quality = 0.8) {
 }
 
 const PROMPT =
-`Extract the following from this receipt and reply with ONLY a JSON object, no other text:
+`Extract this receipt and reply with ONLY a JSON object, no other text:
 {
-  "amount": <final total paid, as a number, no thousands separators>,
+  "merchant": <short merchant/store name as a string, or null>,
+  "category": <exactly one of: ${CATEGORIES.join(", ")}>,
   "currency": <ISO code, one of ${CURRENCIES.join("/")}, or your best guess from the receipt>,
-  "merchant": <short merchant/store name as a string>,
-  "category": <exactly one of: ${CATEGORIES.join(", ")}>
+  "items": [ { "name": <short item name>, "price": <line total for that item as a number> } ],
+  "subtotal": <pre-tax subtotal as a number, or null>,
+  "tax": <tax / service charge / gratuity added on top, as a number, or null>,
+  "total": <final total paid, as a number>
 }
-Use null for any field you cannot determine. A restaurant/cafe/supermarket is "Food", a bar is "Drinks", taxis/trains/fuel are "Transport", hotels are "Accommodation", tours/tickets are "Activities", everything else retail is "Shopping".`;
+Rules:
+- One entry per distinct line item. "price" is the total for that line (quantity × unit price).
+- Do NOT list subtotal, tax, service charge, tip, discount or total as items.
+- Use null for any value you cannot read. Numbers have no currency symbols or thousands separators.
+- Category: restaurant/cafe/supermarket = "Food", bar = "Drinks", taxi/train/fuel = "Transport", hotel = "Accommodation", tour/ticket = "Activities", other retail = "Shopping".`;
 
 async function scanAnthropic(apiKey, base64) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -46,7 +53,7 @@ async function scanAnthropic(apiKey, base64) {
     },
     body: JSON.stringify({
       model: ANTHROPIC_MODEL,
-      max_tokens: 300,
+      max_tokens: 1500,
       messages: [{
         role: "user",
         content: [
@@ -88,8 +95,11 @@ async function scanGemini(apiKey, base64) {
   return (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
 }
 
-// Returns { amount, currency, merchant, category } — any field may be null.
-// Throws on network/API/parse failure; caller falls back to manual entry.
+// Returns { amount, currency, merchant, category, items, subtotal, tax }.
+//   amount  = final total paid (number|null) — used as the bill total
+//   items   = [{ name, price }] line items (may be empty if none could be read)
+// Any field may be null/empty. Throws on network/API/parse failure; caller
+// falls back to manual entry.
 export async function scanReceipt(file) {
   const apiKey = getApiKey();
   if (!apiKey) throw new Error("NO_KEY");
@@ -103,10 +113,30 @@ export async function scanReceipt(file) {
   if (!match) throw new Error("PARSE");
   const parsed = JSON.parse(match[0]);
 
+  const num = (v) => typeof v === "number" && isFinite(v) ? v : null;
+  const items = Array.isArray(parsed.items)
+    ? parsed.items
+        .map((it) => ({
+          name: typeof it?.name === "string" ? it.name.slice(0, 60) : "",
+          price: num(it?.price),
+        }))
+        .filter((it) => it.price != null && it.price > 0)
+    : [];
+
+  const total = num(parsed.total) ?? num(parsed.amount);
+  const subtotal = num(parsed.subtotal);
+
   return {
-    amount: typeof parsed.amount === "number" && parsed.amount > 0 ? parsed.amount : null,
+    // amount falls back to subtotal, then the items' own sum, so we always
+    // have a sensible bill total even on partial reads.
+    amount: (total && total > 0 ? total : null)
+      ?? (subtotal && subtotal > 0 ? subtotal : null)
+      ?? (items.length ? Math.round(items.reduce((a, b) => a + b.price, 0) * 100) / 100 : null),
     currency: typeof parsed.currency === "string" ? parsed.currency.toUpperCase() : null,
     merchant: typeof parsed.merchant === "string" ? parsed.merchant : null,
     category: CATEGORIES.includes(parsed.category) ? parsed.category : null,
+    items,
+    subtotal,
+    tax: num(parsed.tax),
   };
 }

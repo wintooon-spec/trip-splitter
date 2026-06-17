@@ -1,7 +1,7 @@
 import { CATEGORIES, CURRENCIES, CURRENCY_SYMBOLS } from "./config.js";
 import * as DB from "./db.js";
 import { getRate, cachedRate, toAUD } from "./currency.js";
-import { computeNets, simplifyDebts, equalSplit } from "./settle.js";
+import { computeNets, simplifyDebts, equalSplit, computeItemizedSplits, percentToAmounts } from "./settle.js";
 import { scanReceipt, getApiKey, setApiKey } from "./receipt.js";
 
 // ---------------- state ----------------
@@ -16,11 +16,15 @@ const S = {
   pendingTrip: null,
   // expense form
   editingId: null,
-  splitMode: "equal",
+  splitMode: "equal", // "equal" | "amounts" | "percent"
   included: new Set(),
+  customSplits: {},    // memberId -> dollar amount (amounts mode)
+  pctSplits: {},       // memberId -> percent (percent mode)
   selCategory: CATEGORIES[0],
   selCurrency: "EUR",
   selPaidBy: null,
+  // itemize flow (transient — never written to Firebase)
+  itemize: null,
   unsubTrip: null,
 };
 
@@ -120,6 +124,7 @@ function render() {
     settings: renderSettings,
     newgroup: renderNewGroup,
     add: () => {}, // form is set up when opened, live re-render would clobber input
+    itemize: () => {}, // built when opened; live re-render would clobber inputs
   }[S.screen] || (() => {}))();
 }
 
@@ -440,11 +445,13 @@ function openExpenseForm(expenseId) {
   S.included = new Set(exp ? Object.keys(exp.splits) : g.members);
   S.splitMode = "equal";
   if (exp) {
-    // detect custom split: shares unequal
+    // detect uneven split → show it as editable amounts (percent isn't stored,
+    // so a percent split reopens as the equivalent amounts — math is identical)
     const vals = Object.values(exp.splits);
-    if (vals.length > 1 && Math.abs(Math.max(...vals) - Math.min(...vals)) > 0.011) S.splitMode = "custom";
+    if (vals.length > 1 && Math.abs(Math.max(...vals) - Math.min(...vals)) > 0.011) S.splitMode = "amounts";
   }
-  S.customSplits = exp && S.splitMode === "custom" ? { ...exp.splits } : {};
+  S.customSplits = exp && S.splitMode === "amounts" ? { ...exp.splits } : {};
+  S.pctSplits = {};
 
   refreshExpenseForm();
   showScreen("add");
@@ -458,8 +465,27 @@ function refreshExpenseForm() {
   chipRow("exp-paidby", g.members, S.selPaidBy, (m) => { S.selPaidBy = m; refreshExpenseForm(); },
     (m) => `${avatar(m)} ${esc(memberName(m))}`);
 
-  $("btn-split-mode").textContent = S.splitMode === "equal" ? "Custom amounts" : "Equal split";
+  for (const b of $("split-mode-seg").querySelectorAll("button")) {
+    b.classList.toggle("active", b.dataset.mode === S.splitMode);
+    b.onclick = () => setSplitMode(b.dataset.mode);
+  }
   renderSplitRows();
+}
+
+function setSplitMode(mode) {
+  if (mode === S.splitMode) return;
+  const amount = parseFloat($("exp-amount").value) || 0;
+  const ids = [...S.included];
+  if (mode === "amounts") {
+    S.customSplits = ids.length ? equalSplit(amount, ids) : {};
+  } else if (mode === "percent") {
+    const n = ids.length || 1;
+    const base = Math.round((100 / n) * 10) / 10;
+    S.pctSplits = {};
+    ids.forEach((m, i) => { S.pctSplits[m] = i === n - 1 ? Math.round((100 - base * (n - 1)) * 10) / 10 : base; });
+  }
+  S.splitMode = mode;
+  refreshExpenseForm();
 }
 
 function renderSplitRows() {
@@ -474,60 +500,76 @@ function renderSplitRows() {
     const on = S.included.has(mid);
     const row = document.createElement("div");
     row.className = "split-row" + (on ? "" : " off");
+    const toggle = (e) => {
+      e.target.checked ? S.included.add(mid) : S.included.delete(mid);
+      if (S.included.size === 0) { S.included.add(mid); e.target.checked = true; toast("At least one person must be in the split"); }
+      renderSplitRows();
+    };
+
     if (S.splitMode === "equal") {
       row.innerHTML = `
         <label class="check-row grow">
           <input type="checkbox" ${on ? "checked" : ""}> ${avatar(mid)} <span>${esc(memberName(mid))}</span>
         </label>
         <span class="muted">${on ? fmtMoney(equal[mid] ?? 0, S.selCurrency) : "—"}</span>`;
-      row.querySelector("input").onchange = (e) => {
-        e.target.checked ? S.included.add(mid) : S.included.delete(mid);
-        if (S.included.size === 0) { S.included.add(mid); e.target.checked = true; toast("At least one person must be in the split"); }
-        renderSplitRows();
+      row.querySelector("input").onchange = toggle;
+    } else if (S.splitMode === "percent") {
+      const pct = S.pctSplits[mid];
+      const dollarEq = on ? amount * (parseFloat(pct) || 0) / 100 : 0;
+      row.innerHTML = `
+        <label class="check-row grow">
+          <input type="checkbox" ${on ? "checked" : ""}> ${avatar(mid)} <span>${esc(memberName(mid))}</span>
+        </label>
+        <span class="muted split-pct-eq">${on ? fmtMoney(dollarEq, S.selCurrency) : "—"}</span>
+        <input type="number" class="split-pct" step="0.1" min="0" inputmode="decimal"
+          value="${on ? (pct ?? "") : ""}" ${on ? "" : "disabled"}>
+        <span class="muted">%</span>`;
+      row.querySelector('input[type="checkbox"]').onchange = toggle;
+      row.querySelector(".split-pct").oninput = (e) => {
+        S.pctSplits[mid] = parseFloat(e.target.value) || 0;
+        const eq = amount * (S.pctSplits[mid] || 0) / 100;
+        row.querySelector(".split-pct-eq").textContent = fmtMoney(eq, S.selCurrency);
+        validateSplit();
       };
-    } else {
+    } else { // amounts
       row.innerHTML = `
         <label class="check-row grow">
           <input type="checkbox" ${on ? "checked" : ""}> ${avatar(mid)} <span>${esc(memberName(mid))}</span>
         </label>
         <input type="number" class="split-amt" step="0.01" min="0" inputmode="decimal"
           value="${on ? (S.customSplits[mid] ?? equal[mid] ?? "") : ""}" ${on ? "" : "disabled"}>`;
-      row.querySelector('input[type="checkbox"]').onchange = (e) => {
-        e.target.checked ? S.included.add(mid) : S.included.delete(mid);
-        renderSplitRows();
-      };
+      row.querySelector('input[type="checkbox"]').onchange = toggle;
       row.querySelector(".split-amt").oninput = (e) => {
         S.customSplits[mid] = parseFloat(e.target.value) || 0;
-        validateCustomSplit();
+        validateSplit();
       };
     }
     wrap.appendChild(row);
   }
-  if (S.splitMode === "custom") validateCustomSplit();
+  if (S.splitMode !== "equal") validateSplit();
 }
 
-function validateCustomSplit() {
-  const amount = parseFloat($("exp-amount").value) || 0;
-  const sum = [...S.included].reduce((a, m) => a + (S.customSplits[m] || 0), 0);
+function validateSplit() {
   const err = $("split-error");
-  if (Math.abs(sum - amount) > 0.011) {
-    err.textContent = `Split adds to ${fmtMoney(sum, S.selCurrency)} but total is ${fmtMoney(amount, S.selCurrency)}`;
-    err.classList.remove("hidden");
-    return false;
+  if (S.splitMode === "percent") {
+    const sum = [...S.included].reduce((a, m) => a + (parseFloat(S.pctSplits[m]) || 0), 0);
+    if (Math.abs(sum - 100) > 0.1) {
+      err.textContent = `Percentages add to ${sum.toFixed(1)}% — must total 100%`;
+      err.classList.remove("hidden");
+      return false;
+    }
+  } else if (S.splitMode === "amounts") {
+    const amount = parseFloat($("exp-amount").value) || 0;
+    const sum = [...S.included].reduce((a, m) => a + (S.customSplits[m] || 0), 0);
+    if (Math.abs(sum - amount) > 0.011) {
+      err.textContent = `Split adds to ${fmtMoney(sum, S.selCurrency)} but total is ${fmtMoney(amount, S.selCurrency)}`;
+      err.classList.remove("hidden");
+      return false;
+    }
   }
   err.classList.add("hidden");
   return true;
 }
-
-$("btn-split-mode").onclick = () => {
-  S.splitMode = S.splitMode === "equal" ? "custom" : "equal";
-  if (S.splitMode === "custom") {
-    const amount = parseFloat($("exp-amount").value) || 0;
-    const ids = [...S.included];
-    S.customSplits = ids.length ? equalSplit(amount, ids) : {};
-  }
-  refreshExpenseForm();
-};
 
 $("exp-amount").addEventListener("input", () => { renderSplitRows(); updateAudPreview(); });
 
@@ -556,10 +598,15 @@ $("form-expense").onsubmit = async (e) => {
   if (S.included.size === 0) return toast("Pick who to split between");
 
   let splits;
-  if (S.splitMode === "custom") {
-    if (!validateCustomSplit()) return;
+  if (S.splitMode === "amounts") {
+    if (!validateSplit()) return;
     splits = {};
     for (const m of S.included) splits[m] = Math.round((S.customSplits[m] || 0) * 100) / 100;
+  } else if (S.splitMode === "percent") {
+    if (!validateSplit()) return;
+    const pct = {};
+    for (const m of S.included) pct[m] = parseFloat(S.pctSplits[m]) || 0;
+    splits = percentToAmounts(pct, amount);
   } else {
     splits = equalSplit(amount, [...S.included]);
   }
@@ -615,6 +662,13 @@ $("receipt-input").onchange = async (e) => {
   $("btn-scan").disabled = true;
   try {
     const r = await scanReceipt(file);
+    // Two or more line items → itemize so you can tick who had what.
+    if (r.items && r.items.length >= 2) {
+      status.textContent = "";
+      openItemize(r);
+      return;
+    }
+    // Otherwise just prefill the single-total form (old behaviour).
     if (r.amount) { $("exp-amount").value = r.amount; }
     if (r.currency && CURRENCIES.includes(r.currency)) S.selCurrency = r.currency;
     if (r.merchant) $("exp-desc").value = r.merchant;
@@ -627,6 +681,142 @@ $("receipt-input").onchange = async (e) => {
     status.textContent = "";
     toast(err.message === "NO_KEY" ? "Add your API key in Settings" : "Couldn't read the receipt — enter manually");
   } finally { $("btn-scan").disabled = false; }
+};
+
+// ---------------- ITEMIZE: assign receipt items to people ----------------
+// All state here is transient (S.itemize) — nothing is written to Firebase.
+// On "Apply" it collapses to an ordinary amounts split on the expense form.
+function openItemize(scan) {
+  const g = curGroup();
+  if (!g || !groupActive(g)) return;
+  const cur = scan.currency && CURRENCIES.includes(scan.currency) ? scan.currency : S.selCurrency;
+  S.itemize = {
+    currency: cur,
+    merchant: scan.merchant || "",
+    category: CATEGORIES.includes(scan.category) ? scan.category : S.selCategory,
+    items: scan.items.map((it) => ({ name: it.name || "Item", price: it.price || 0, who: new Set() })),
+  };
+  $("itemize-merchant").textContent =
+    (scan.merchant ? `${scan.merchant} · ` : "") + `${scan.items.length} items detected`;
+  $("itemize-currency").textContent = CURRENCY_SYMBOLS[cur] || cur;
+  $("itemize-total").value = scan.amount || "";
+  renderItemize();
+  showScreen("itemize");
+}
+
+function renderItemize() {
+  const g = curGroup();
+  const wrap = $("itemize-items");
+  wrap.innerHTML = "";
+  S.itemize.items.forEach((item, idx) => {
+    const card = document.createElement("div");
+    card.className = "item-card" + (item.who.size === 0 ? " unassigned" : "");
+    const people = g.members.map((mid) => {
+      const on = item.who.has(mid);
+      return `<button type="button" class="who-chip${on ? " on" : ""}" data-mid="${mid}">${avatar(mid)}<span>${esc(memberName(mid))}</span></button>`;
+    }).join("");
+    card.innerHTML = `
+      <div class="item-top">
+        <input type="text" value="${esc(item.name)}" maxlength="60" autocomplete="off">
+        <input type="number" class="item-price" step="0.01" min="0" inputmode="decimal" value="${item.price || ""}" placeholder="0.00">
+        <button type="button" class="item-del" title="Remove item">✕</button>
+      </div>
+      <div class="item-people">${people}</div>`;
+    const nameEl = card.querySelector('input[type="text"]');
+    const priceEl = card.querySelector(".item-price");
+    nameEl.oninput = (e) => { item.name = e.target.value; };
+    priceEl.oninput = (e) => { item.price = parseFloat(e.target.value) || 0; updateItemizePreview(); };
+    card.querySelector(".item-del").onclick = () => { S.itemize.items.splice(idx, 1); renderItemize(); };
+    for (const chip of card.querySelectorAll(".who-chip")) {
+      chip.onclick = () => {
+        const mid = chip.dataset.mid;
+        item.who.has(mid) ? item.who.delete(mid) : item.who.add(mid);
+        renderItemize();
+      };
+    }
+    wrap.appendChild(card);
+  });
+  updateItemizePreview();
+}
+
+// Recompute the tax note, leftover guard and per-person preview. Returns the
+// computed split (or null if not ready to apply).
+function updateItemizePreview() {
+  const g = curGroup();
+  const cur = S.itemize.currency;
+  const billTotal = parseFloat($("itemize-total").value) || 0;
+  const items = S.itemize.items.map((it) => ({ price: it.price, members: [...it.who] }));
+  const itemsTotal = items.reduce((a, it) => a + (it.members.length ? (Number(it.price) || 0) : 0), 0);
+
+  const taxEl = $("itemize-tax-note");
+  const diff = Math.round((billTotal - itemsTotal) * 100) / 100;
+  if (!billTotal) taxEl.textContent = "Enter the bill total above to handle tax.";
+  else if (Math.abs(diff) < 0.01) taxEl.textContent = `Items add up to the bill total — tax is already in the prices, nothing extra to split.`;
+  else if (diff > 0) taxEl.textContent = `${fmtMoney(diff, cur)} tax/service on top of ${fmtMoney(itemsTotal, cur)} — split in proportion to what each person ordered.`;
+  else taxEl.textContent = `${fmtMoney(-diff, cur)} less than the items (discount) — shared in proportion.`;
+
+  const unassigned = S.itemize.items.filter((it) => it.who.size === 0).length;
+  const leftover = $("itemize-leftover");
+  let blocked = true;
+  if (!S.itemize.items.length) leftover.textContent = "No items — add at least one.";
+  else if (unassigned > 0) leftover.textContent = `${unassigned} item${unassigned === 1 ? "" : "s"} not assigned to anyone yet — tap a name on each.`;
+  else if (itemsTotal <= 0) leftover.textContent = "Enter item prices to work out the split.";
+  else if (!billTotal) leftover.textContent = "Enter the bill total.";
+  else blocked = false;
+  leftover.classList.toggle("hidden", !blocked);
+  $("btn-itemize-apply").disabled = blocked;
+
+  const pv = $("itemize-preview");
+  if (blocked) {
+    pv.innerHTML = `<div class="muted small">Assign every item to see each person's share.</div>`;
+    return null;
+  }
+  const result = computeItemizedSplits(items, billTotal);
+  const assigned = new Set();
+  for (const it of S.itemize.items) for (const m of it.who) assigned.add(m);
+  pv.replaceChildren(...g.members.filter((m) => assigned.has(m)).map((mid) => {
+    const div = document.createElement("div");
+    div.className = "preview-row";
+    div.innerHTML = `<div class="check-row">${avatar(mid)} <span>${esc(memberName(mid))}</span></div><strong>${fmtMoney(result.splits[mid] || 0, cur)}</strong>`;
+    return div;
+  }));
+  return result;
+}
+
+$("itemize-total").addEventListener("input", () => { if (S.itemize) updateItemizePreview(); });
+
+$("btn-itemize-additem").onclick = () => {
+  if (!S.itemize) return;
+  S.itemize.items.push({ name: "Item", price: 0, who: new Set() });
+  renderItemize();
+};
+
+$("btn-itemize-back").onclick = () => { S.itemize = null; showScreen("add"); };
+$("btn-itemize-cancel").onclick = () => { S.itemize = null; showScreen("add"); };
+
+$("btn-itemize-apply").onclick = () => {
+  if (!S.itemize) return;
+  const result = updateItemizePreview();
+  if (!result) return; // still blocked
+  const billTotal = parseFloat($("itemize-total").value) || 0;
+  const assigned = new Set();
+  for (const it of S.itemize.items) for (const m of it.who) assigned.add(m);
+
+  // Collapse the itemization into an ordinary amounts split on the form.
+  $("exp-amount").value = billTotal;
+  if (S.itemize.merchant) $("exp-desc").value = S.itemize.merchant;
+  S.selCurrency = S.itemize.currency;
+  S.selCategory = S.itemize.category;
+  S.included = new Set([...assigned]);
+  S.customSplits = { ...result.splits };
+  S.pctSplits = {};
+  S.splitMode = "amounts";
+  S.itemize = null;
+
+  refreshExpenseForm();
+  showScreen("add");
+  updateAudPreview();
+  toast("Split applied — review and save");
 };
 
 // ---------------- BALANCES ----------------

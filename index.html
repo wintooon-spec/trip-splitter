@@ -184,7 +184,11 @@
 
       <div class="section-title-row">
         <label>Split between</label>
-        <button type="button" class="btn btn-ghost btn-small" id="btn-split-mode">Custom amounts</button>
+        <div class="seg" id="split-mode-seg">
+          <button type="button" data-mode="equal">Equal</button>
+          <button type="button" data-mode="amounts">Amounts</button>
+          <button type="button" data-mode="percent">%</button>
+        </div>
       </div>
       <div id="exp-splits" class="stack"></div>
       <div id="split-error" class="error hidden"></div>
@@ -192,6 +196,39 @@
       <button type="submit" class="btn btn-primary btn-big" id="btn-save-expense">Save expense</button>
       <button type="button" class="btn btn-danger hidden" id="btn-delete-expense">Delete expense</button>
     </form>
+  </section>
+
+  <!-- ============ ITEMIZE (from receipt scan) ============ -->
+  <section id="screen-itemize" class="screen hidden">
+    <header class="app-header">
+      <button class="icon-btn" id="btn-itemize-back">←</button>
+      <h1>Who had what?</h1>
+    </header>
+
+    <div class="card">
+      <div id="itemize-merchant" class="muted small"></div>
+      <label>Bill total (incl. tax)
+        <div class="amount-row">
+          <input type="number" id="itemize-total" step="0.01" min="0" inputmode="decimal" placeholder="0.00">
+          <span id="itemize-currency" class="chip itemize-cur"></span>
+        </div>
+      </label>
+      <div id="itemize-tax-note" class="muted small" style="margin-top:8px"></div>
+    </div>
+
+    <div class="section-title-row">
+      <label>Tap each person who shared an item</label>
+      <button type="button" class="btn btn-ghost btn-small" id="btn-itemize-additem">+ Item</button>
+    </div>
+    <div id="itemize-items" class="stack"></div>
+
+    <div id="itemize-leftover" class="closed-note hidden"></div>
+
+    <h2>Per person</h2>
+    <div id="itemize-preview" class="stack"></div>
+
+    <button type="button" class="btn btn-primary btn-big" id="btn-itemize-apply">Apply to expense</button>
+    <button type="button" class="btn btn-ghost" id="btn-itemize-cancel">Cancel</button>
   </section>
 
   <!-- ============ BALANCES ============ -->
